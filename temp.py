@@ -129,10 +129,11 @@ def adjust_monthly_AHT(
     col_adjusted="adjusted_AHT"
 ):
     """
-    Adjust AHT values to ensure:
+    Adjust AHT values so that:
       1. The weighted average AHT (weighted by offered) equals monthly_AHT
-      2. The daily AHT distribution pattern is preserved (scaled proportionally)
-      3. No special-date exceptions are applied
+      2. The daily AHT pattern is preserved (proportional scaling)
+      3. Rows with null AHT or offered are excluded from the calculation
+         and set to null in the adjusted output.
 
     Parameters
     ----------
@@ -144,29 +145,39 @@ def adjust_monthly_AHT(
     Returns
     -------
     pd.DataFrame
-        DataFrame with an added 'adjusted_AHT' column.
+        DataFrame with a new column for adjusted AHT values.
     """
 
     df = df.copy()
-    df[col_adjusted] = df[col_aht]
+    df[col_adjusted] = np.nan  # initialize output column
 
     def _adjust_group(g):
-        # Target monthly weighted average for this (LOB, month)
-        target_avg = g[col_monthly_aht].iloc[0]
+        # Exclude rows with missing values
+        valid_mask = g[col_aht].notna() & g[col_offered].notna()
+        valid_rows = g.loc[valid_mask]
 
-        # Current weighted average
-        current_avg = np.average(g[col_aht], weights=g[col_offered]) if g[col_offered].sum() > 0 else 0
-
-        if current_avg == 0:
+        if valid_rows.empty:
             return g  # nothing to adjust
 
-        # Scaling factor to match target monthly AHT
+        # Target weighted average
+        target_avg = valid_rows[col_monthly_aht].iloc[0]
+
+        # Compute current weighted average
+        current_avg = np.average(valid_rows[col_aht], weights=valid_rows[col_offered]) if valid_rows[col_offered].sum() > 0 else 0
+
+        if current_avg == 0:
+            return g  # no valid adjustment possible
+
+        # Compute proportional scaling factor
         scale = target_avg / current_avg
 
-        # Apply scaling proportionally to preserve daily AHT distribution
-        g[col_adjusted] = g[col_aht] * scale
+        # Apply scaling to valid rows only
+        g.loc[valid_mask, col_adjusted] = g.loc[valid_mask, col_aht] * scale
+
+        # Leave invalid rows (with nulls) as NaN
         return g
 
-    # Apply adjustment per LOB × month
+    # Apply within each LOB × month group
     df = df.groupby([col_lob, col_month], group_keys=False).apply(_adjust_group)
+
     return df
