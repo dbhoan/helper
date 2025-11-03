@@ -117,3 +117,56 @@ def adjust_monthly_offered(
     df = df.groupby([col_lob, col_month], group_keys=False).apply(_adjust_group)
 
     return df
+
+
+def adjust_monthly_AHT(
+    df,
+    col_lob="LOB",
+    col_aht="AHT",
+    col_offered="offered",
+    col_month="month",
+    col_monthly_aht="monthly_AHT",
+    col_adjusted="adjusted_AHT"
+):
+    """
+    Adjust AHT values to ensure:
+      1. The weighted average AHT (weighted by offered) equals monthly_AHT
+      2. The daily AHT distribution pattern is preserved (scaled proportionally)
+      3. No special-date exceptions are applied
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with columns for AHT, offered, LOB, and month.
+    col_* : str
+        Customizable column names.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with an added 'adjusted_AHT' column.
+    """
+
+    df = df.copy()
+    df[col_adjusted] = df[col_aht]
+
+    def _adjust_group(g):
+        # Target monthly weighted average for this (LOB, month)
+        target_avg = g[col_monthly_aht].iloc[0]
+
+        # Current weighted average
+        current_avg = np.average(g[col_aht], weights=g[col_offered]) if g[col_offered].sum() > 0 else 0
+
+        if current_avg == 0:
+            return g  # nothing to adjust
+
+        # Scaling factor to match target monthly AHT
+        scale = target_avg / current_avg
+
+        # Apply scaling proportionally to preserve daily AHT distribution
+        g[col_adjusted] = g[col_aht] * scale
+        return g
+
+    # Apply adjustment per LOB × month
+    df = df.groupby([col_lob, col_month], group_keys=False).apply(_adjust_group)
+    return df
